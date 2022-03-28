@@ -10,7 +10,6 @@ import (
 
 	"github.com/dave/jennifer/jen"
 	. "github.com/dave/jennifer/jen"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/fatih/structtag"
 	"github.com/urfave/cli/v2"
 	"github.com/wricardo/structparser"
@@ -186,7 +185,6 @@ func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, ta
 			f := tagToFieldMap[k]
 			fields = append(fields, f)
 		}
-		spew.Dump(`fields: %#v\n`, fields)
 		if indexDef.Options.Unique {
 			f.Func().Params(structReceiver).Id("GetBy" + getNamesForFunction(fields)).Call(getParams(fields)...).Parens(List(Op("*").Id(strct.Name), Error())).BlockFunc(func(g *Group) {
 				g.Id("res").Op(":=").Id(strct.Name).Values()
