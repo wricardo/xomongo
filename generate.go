@@ -1,17 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/dave/jennifer/jen"
 	. "github.com/dave/jennifer/jen"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/fatih/structtag"
 	"github.com/urfave/cli/v2"
 	"github.com/wricardo/structparser"
 )
+
+const inputName = "input"
+const receiverId = "x"
 
 func generate(c *cli.Context) error {
 	parsed, err := structparser.ParseDirectoryWithFilter(c.String("input"), nil)
@@ -73,7 +79,6 @@ func generate(c *cli.Context) error {
 				Id("db").Id("*mongo.Database"),
 			)
 
-			receiverId := "x"
 			structReceiver := Id(receiverId).Id("*" + repositoryName)
 
 			//constructor
@@ -88,7 +93,6 @@ func generate(c *cli.Context) error {
 			fn.Block(
 				Return(Id(receiverId + ".db.Collection").Params(Lit(metadata.CollectionName))),
 			)
-			inputName := "input"
 
 			// insert
 			fn = f.Func().Params(structReceiver).Id("Insert").Params(Id("ctx").Qual("context", "Context"), Id(inputName).Op("*").Id(strct.Name)).Id("error")
@@ -120,23 +124,29 @@ func generate(c *cli.Context) error {
 
 			// getPrimitive
 			if idField != nil {
-				fn = f.Func().Params(structReceiver).Id("GetPrimitive").Params(Id("ctx").Qual("context", "Context"), Id(inputName).Id(idField.Type)).Parens(List(Op("*").Id(strct.Name), Error()))
+				fn = f.Func().Params(structReceiver).Id("GetPrimitive").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
 					g.Id("res").Op(":=").Id(strct.Name).Values()
-					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(inputName)))).Dot("Decode").Call(Op("&").Id("res"))
+					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField))))).Dot("Decode").Call(Op("&").Id("res"))
 					isErrorNoDocuments(g)
 					g.Return(Op("&").Id("res"), Nil())
 				})
-				fn = f.Func().Params(structReceiver).Id("Get").Params(Id("ctx").Qual("context", "Context"), Id(inputName).String()).Parens(List(Op("*").Id(strct.Name), Error()))
+				fn = f.Func().Params(structReceiver).Id("Get").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).String()).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
-					g.List(Id("id"), Err()).Op(":=").Qual("go.mongodb.org/mongo-driver/bson/primitive", "ObjectIDFromHex").Call(Id(inputName))
+					g.List(Id("_id"), Err()).Op(":=").Qual("go.mongodb.org/mongo-driver/bson/primitive", "ObjectIDFromHex").Call(Id(getVarNameForField(*idField)))
 					isErrorReturnNilErr(g)
-					g.Return(Id(receiverId).Dot("GetPrimitive").Call(Id("ctx"), Id("id")))
+					g.Return(Id(receiverId).Dot("GetPrimitive").Call(Id("ctx"), Id("_id")))
+				})
+				fn = f.Func().Params(structReceiver).Id("Delete").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "DeleteResult"), Error()))
+				fn.BlockFunc(func(g *Group) {
+					g.List(Id("res"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("DeleteOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField)))))
+					isErrorNoDocuments(g)
+					g.Return(Id("res"), Nil())
 				})
 			}
 
-			// listAll
-			fn = f.Func().Params(structReceiver).Id("ListAll").Params(Id("ctx").Qual("context", "Context")).Parens(List(Index().Id(strct.Name), Error()))
+			// list
+			fn = f.Func().Params(structReceiver).Id("List").Params(Id("ctx").Qual("context", "Context")).Parens(List(Index().Id(strct.Name), Error()))
 			fn.BlockFunc(func(g *Group) {
 				g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values())
 				isErrorReturnNilErr(g)
@@ -146,6 +156,9 @@ func generate(c *cli.Context) error {
 				)
 				g.Return(Id("res"), Nil())
 			})
+
+			// indexes
+			generateIndexes(f, strct, metadata, tagToFieldMap, structReceiver)
 
 			file, err := os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 			if err != nil {
@@ -165,13 +178,88 @@ func generate(c *cli.Context) error {
 	return nil
 }
 
+func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, tagToFieldMap map[string]structparser.Field, structReceiver *Statement) {
+	alreadyGenerated := make(map[string]struct{})
+	for _, indexDef := range meta.Indexes {
+		fields := make([]structparser.Field, 0, len(indexDef.Keys))
+		for k, _ := range indexDef.Keys {
+			f := tagToFieldMap[k]
+			fields = append(fields, f)
+		}
+		spew.Dump(`fields: %#v\n`, fields)
+		if indexDef.Options.Unique {
+			f.Func().Params(structReceiver).Id("GetBy" + getNamesForFunction(fields)).Call(getParams(fields)...).Parens(List(Op("*").Id(strct.Name), Error())).BlockFunc(func(g *Group) {
+				g.Id("res").Op(":=").Id(strct.Name).Values()
+				g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldsToBson(fields)...)).Dot("Decode").Call(Op("&").Id("res"))
+				isErrorNoDocuments(g)
+				g.Return(Op("&").Id("res"), Nil())
+			})
+		} else {
+			tmpFields := make([]structparser.Field, 0, len(fields))
+			for _, v := range fields {
+				tmpFields = append(tmpFields, v)
+				namesForFunction := getNamesForFunction(tmpFields)
+				if _, ok := alreadyGenerated[namesForFunction]; !ok {
+					alreadyGenerated[namesForFunction] = struct{}{}
+					f.Func().Params(structReceiver).Id("ListBy" + namesForFunction).Call(getParams(tmpFields)...).Parens(List(Index().Id(strct.Name), Error())).BlockFunc(func(g *Group) {
+						g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldsToBson(tmpFields)...))
+						isErrorReturnNilErr(g)
+						g.Id("res").Op(":=").Index().Id(strct.Name).Values()
+						g.If(Err().Op(":=").Id("cur").Dot("All").Call(Id("ctx"), Op("&").Id("res")).Op(";").Id("err").Op("!=").Nil()).Block(
+							Return(Nil(), Err()),
+						)
+						g.Return(Id("res"), Nil())
+					})
+				}
+			}
+		}
+	}
+}
+
+func getParams(fields []structparser.Field) []Code {
+	codes := []Code{}
+	codes = append(codes, Id("ctx").Qual("context", "Context"))
+	for _, v := range fields {
+		codes = append(codes, Id(getVarNameForField(v)).Id(v.Type))
+	}
+	return codes
+}
+
+func getNamesForFunction(fields []structparser.Field) string {
+	tmp := make([]string, 0, len(fields))
+	for _, v := range fields {
+		tmp = append(tmp, v.Name)
+	}
+	return strings.Join(tmp, "And")
+}
+
+func getVarNameForField(field structparser.Field) string {
+	if field.Name == "Id" || field.Name == "ID" {
+		return "id"
+	}
+	return makeFirstLowerCase(field.Name)
+}
+
+func makeFirstLowerCase(s string) string {
+	if len(s) < 2 {
+		return strings.ToLower(s)
+	}
+
+	bts := []byte(s)
+
+	lc := bytes.ToLower([]byte{bts[0]})
+	rest := bts[1:]
+
+	return string(bytes.Join([][]byte{lc, rest}, nil))
+}
+
 func isErrorNoDocuments(g *Group) *Statement {
 	return isError(
 		g,
 		If(Err().Op("==").Qual("go.mongodb.org/mongo-driver/mongo", "ErrNoDocuments")).Block(
 			Return(Nil(), Nil()),
 		),
-		Return(Nil(), Nil()),
+		Return(Nil(), Err()),
 	)
 }
 
@@ -189,6 +277,14 @@ func fieldToBson(field structparser.Field, value *jen.Statement) *jen.Statement 
 	))
 }
 
+func fieldsToBson(fields []structparser.Field) []jen.Code {
+	codes := []Code{}
+	for _, field := range fields {
+		codes = append(codes, Values((Lit(getBsonNameFromField(field))), Id(getVarNameForField(field))))
+	}
+	return codes
+}
+
 func getBsonNameFromField(field structparser.Field) string {
 	val, err := structtag.Parse(field.Tag)
 	if err != nil {
@@ -202,5 +298,13 @@ func getBsonNameFromField(field structparser.Field) string {
 }
 
 type structMetadata struct {
-	CollectionName string `json:"collection_name"`
+	CollectionName string            `json:"collection_name"`
+	Indexes        []indexDefinition `json:"indexes"`
+}
+
+type indexDefinition struct {
+	Keys    map[string]int `json:"keys"`
+	Options struct {
+		Unique bool `json:"unique"`
+	}
 }
