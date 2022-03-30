@@ -7,7 +7,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/fatih/structtag v1.2.0
 	github.com/urfave/cli/v2 v2.4.0
-	github.com/wricardo/structparser v0.0.0-20220325182911-d0591ca0459b
+	github.com/wricardo/structparser v0.0.0-20220330182409-264c0f50fdfb
 	go.mongodb.org/mongo-driver v1.8.4
 )
 

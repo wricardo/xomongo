@@ -3,24 +3,23 @@ package example
 
 import (
 	"context"
-	"time"
-
 	bson "go.mongodb.org/mongo-driver/bson"
 	primitive "go.mongodb.org/mongo-driver/bson/primitive"
 	mongo "go.mongodb.org/mongo-driver/mongo"
+	"time"
 )
 
-type UserRepository struct {
+type userRepository struct {
 	db *mongo.Database
 }
 
-func NewUserRepository(db *mongo.Database) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(db *mongo.Database) UserRepository {
+	return &userRepository{db: db}
 }
-func (x *UserRepository) getCollection() *mongo.Collection {
+func (x *userRepository) getCollection() *mongo.Collection {
 	return x.db.Collection("user")
 }
-func (x *UserRepository) Insert(ctx context.Context, input *User) error {
+func (x *userRepository) Insert(ctx context.Context, input *User) error {
 	if input.ID.IsZero() {
 		input.ID = primitive.NewObjectID()
 	}
@@ -34,7 +33,7 @@ func (x *UserRepository) Insert(ctx context.Context, input *User) error {
 	}
 	return nil
 }
-func (x *UserRepository) GetPrimitive(ctx context.Context, id primitive.ObjectID) (*User, error) {
+func (x *userRepository) GetPrimitive(ctx context.Context, id primitive.ObjectID) (*User, error) {
 	res := User{}
 	err := x.getCollection().FindOne(ctx, bson.D{{"_id", id}}).Decode(&res)
 	if err != nil {
@@ -45,14 +44,14 @@ func (x *UserRepository) GetPrimitive(ctx context.Context, id primitive.ObjectID
 	}
 	return &res, nil
 }
-func (x *UserRepository) Get(ctx context.Context, id string) (*User, error) {
+func (x *userRepository) Get(ctx context.Context, id string) (*User, error) {
 	_id, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return nil, err
 	}
 	return x.GetPrimitive(ctx, _id)
 }
-func (x *UserRepository) Delete(ctx context.Context, id primitive.ObjectID) (*mongo.DeleteResult, error) {
+func (x *userRepository) Delete(ctx context.Context, id primitive.ObjectID) (*mongo.DeleteResult, error) {
 	res, err := x.getCollection().DeleteOne(ctx, bson.D{{"_id", id}})
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -62,7 +61,7 @@ func (x *UserRepository) Delete(ctx context.Context, id primitive.ObjectID) (*mo
 	}
 	return res, nil
 }
-func (x *UserRepository) List(ctx context.Context) ([]User, error) {
+func (x *userRepository) List(ctx context.Context) ([]User, error) {
 	cur, err := x.getCollection().Find(ctx, bson.D{})
 	if err != nil {
 		return nil, err
@@ -73,9 +72,9 @@ func (x *UserRepository) List(ctx context.Context) ([]User, error) {
 	}
 	return res, nil
 }
-func (x *UserRepository) GetByNameAndShoeSize(ctx context.Context, name string, shoeSize int) (*User, error) {
+func (x *userRepository) GetByShoeSizeAndName(ctx context.Context, shoeSize int, name string) (*User, error) {
 	res := User{}
-	err := x.getCollection().FindOne(ctx, bson.D{{"name", name}, {"shoe_size", shoeSize}}).Decode(&res)
+	err := x.getCollection().FindOne(ctx, bson.D{{"shoe_size", shoeSize}, {"name", name}}).Decode(&res)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, nil
@@ -84,7 +83,7 @@ func (x *UserRepository) GetByNameAndShoeSize(ctx context.Context, name string, 
 	}
 	return &res, nil
 }
-func (x *UserRepository) ListByName(ctx context.Context, name string) ([]User, error) {
+func (x *userRepository) ListByName(ctx context.Context, name string) ([]User, error) {
 	cur, err := x.getCollection().Find(ctx, bson.D{{"name", name}})
 	if err != nil {
 		return nil, err
@@ -95,8 +94,8 @@ func (x *UserRepository) ListByName(ctx context.Context, name string) ([]User, e
 	}
 	return res, nil
 }
-func (x *UserRepository) ListByAge(ctx context.Context, age int) ([]User, error) {
-	cur, err := x.getCollection().Find(ctx, bson.D{{"age", age}})
+func (x *userRepository) ListByNameAndAge(ctx context.Context, name string, age int) ([]User, error) {
+	cur, err := x.getCollection().Find(ctx, bson.D{{"name", name}, {"age", age}})
 	if err != nil {
 		return nil, err
 	}
@@ -106,18 +105,7 @@ func (x *UserRepository) ListByAge(ctx context.Context, age int) ([]User, error)
 	}
 	return res, nil
 }
-func (x *UserRepository) ListByAgeAndName(ctx context.Context, age int, name string) ([]User, error) {
-	cur, err := x.getCollection().Find(ctx, bson.D{{"age", age}, {"name", name}})
-	if err != nil {
-		return nil, err
-	}
-	res := []User{}
-	if err := cur.All(ctx, &res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-func (x *UserRepository) ListByProfile(ctx context.Context, profile Profile) ([]User, error) {
+func (x *userRepository) ListByProfile(ctx context.Context, profile Profile) ([]User, error) {
 	cur, err := x.getCollection().Find(ctx, bson.D{{"profile", profile}})
 	if err != nil {
 		return nil, err
@@ -127,4 +115,24 @@ func (x *UserRepository) ListByProfile(ctx context.Context, profile Profile) ([]
 		return nil, err
 	}
 	return res, nil
+}
+
+type UserRepository interface {
+	Delete(ctx context.Context, id primitive.ObjectID) (*mongo.DeleteResult, error)
+	Get(ctx context.Context, id string) (*User, error)
+	GetByShoeSizeAndName(ctx context.Context, shoeSize int, name string) (*User, error)
+	GetPrimitive(ctx context.Context, id primitive.ObjectID) (*User, error)
+	Insert(ctx context.Context, input *User) error
+	List(ctx context.Context) ([]User, error)
+	ListByName(ctx context.Context, name string) ([]User, error)
+	ListByNameAndAge(ctx context.Context, name string, age int) ([]User, error)
+	ListByProfile(ctx context.Context, profile Profile) ([]User, error)
+	getCollection() *mongo.Collection
+}
+type Repository struct {
+	User UserRepository
+}
+
+func NewRepository(db *mongo.Database) *Repository {
+	return &Repository{User: NewUserRepository(db)}
 }

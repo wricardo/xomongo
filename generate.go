@@ -73,7 +73,7 @@ func generate(c *cli.Context) error {
 			}
 
 			// repository struct
-			repositoryName := strct.Name + "Repository"
+			repositoryName := makeFirstLowerCase(strct.Name) + "Repository"
 			f.Type().Id(repositoryName).Struct(
 				Id("db").Id("*mongo.Database"),
 			)
@@ -81,7 +81,7 @@ func generate(c *cli.Context) error {
 			structReceiver := Id(receiverId).Id("*" + repositoryName)
 
 			//constructor
-			f.Func().Id("New" + repositoryName).Params(Id("db").Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "Database")).Op("*").Id(repositoryName).Block(
+			f.Func().Id("New" + strct.Name + "Repository").Params(Id("db").Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "Database")).Id(strct.Name + "Repository").Block(
 				Return(Op("&").Id(repositoryName).Values(Dict{
 					Id("db"): Id("db"),
 				})),
@@ -159,20 +159,93 @@ func generate(c *cli.Context) error {
 			// indexes
 			generateIndexes(f, strct, metadata, tagToFieldMap, structReceiver)
 
-			file, err := os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			if c.Bool("verbose") {
-				f.Render(os.Stdout)
-			}
-			err = f.Render(file)
-			if err != nil {
-				return err
-			}
 		}
+
+		file, err := os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+		if err != nil {
+			return err
+		}
+
+		if c.Bool("verbose") {
+			f.Render(os.Stdout)
+		}
+		err = f.Render(file)
+		if err != nil {
+			return err
+		}
+		file.Close()
+
+		generateInterfaces(c, f)
+
+		file, err = os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		if c.Bool("verbose") {
+			f.Render(os.Stdout)
+		}
+		err = f.Render(file)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func generateInterfaces(c *cli.Context, f *jen.File) error {
+	parsed, err := structparser.ParseDirectoryWithFilter(c.String("input"), nil)
+	if err != nil {
+		return err
+	}
+
+	if c.Bool("verbose") {
+		pretty, _ := json.MarshalIndent(parsed, "", "\t")
+		log.Println("parsed structs", string(pretty))
+	}
+
+	{
+
+		generatedInterfaces := []string{}
+		for _, strct := range parsed {
+			if !strings.HasSuffix(strct.Name, "Repository") {
+				continue
+			}
+			metadata := structMetadata{}
+			if len(strct.Docs) == 1 {
+				if err := json.Unmarshal([]byte(strct.Docs[0]), &metadata); err != nil {
+					return err
+				}
+			}
+
+			// Interface
+			{
+				interfaceName := makeFirstUpperCase(strct.Name)
+				generatedInterfaces = append(generatedInterfaces, interfaceName)
+				f.Type().Id(interfaceName).InterfaceFunc(func(g *Group) {
+					for _, v := range strct.Methods {
+						g.Id(v.Signature)
+					}
+				})
+			}
+
+		}
+
+		f.Type().Id("Repository").StructFunc(func(g *Group) {
+			for _, v := range generatedInterfaces {
+				g.Id(strings.TrimSuffix(v, "Repository")).Id(v)
+			}
+		})
+
+		f.Func().Id("NewRepository").Params(Id("db").Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "Database")).Id("*Repository").BlockFunc(func(g *Group) {
+			dict := make(Dict, 0)
+			for _, v := range generatedInterfaces {
+				dict[Id(strings.TrimSuffix(v, "Repository"))] = Id("New" + v).Call(Id("db"))
+
+			}
+			g.Return(Op("&").Id("Repository").Values(dict))
+		})
 	}
 	return nil
 }
@@ -246,6 +319,19 @@ func makeFirstLowerCase(s string) string {
 	bts := []byte(s)
 
 	lc := bytes.ToLower([]byte{bts[0]})
+	rest := bts[1:]
+
+	return string(bytes.Join([][]byte{lc, rest}, nil))
+}
+
+func makeFirstUpperCase(s string) string {
+	if len(s) < 2 {
+		return strings.ToUpper(s)
+	}
+
+	bts := []byte(s)
+
+	lc := bytes.ToUpper([]byte{bts[0]})
 	rest := bts[1:]
 
 	return string(bytes.Join([][]byte{lc, rest}, nil))
