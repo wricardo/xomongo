@@ -294,12 +294,6 @@ func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, ta
 							Return(Nil(), Nil(), Err()),
 						)
 						g.Return(Id("res"), Id("getPaginationData").Call(Id("paginatedData")), Nil())
-						// isErrorReturnNilErr(g)
-						// g.Id("res").Op(":=").Index().Id(strct.Name).Values()
-						// g.If(Err().Op(":=").Id("cur").Dot("All").Call(Id("ctx"), Op("&").Id("res")).Op(";").Id("err").Op("!=").Nil()).Block(
-						// 	Return(Nil(), Err()),
-						// )
-						// g.Return(Id("res"), Nil())
 					})
 				}
 			}
@@ -419,5 +413,5 @@ type indexDefinition struct {
 	Keys    map[string]int `json:"keys"`
 	Options struct {
 		Unique bool `json:"unique"`
-	}
+	} `json:"options"`
 }
