@@ -10,6 +10,7 @@ import (
 
 	"github.com/dave/jennifer/jen"
 	. "github.com/dave/jennifer/jen"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/fatih/structtag"
 	"github.com/urfave/cli/v2"
 	"github.com/wricardo/structparser"
@@ -35,7 +36,6 @@ func generate(c *cli.Context) error {
 		f.Id("import").Parens(Id("mongopagination \"github.com/gobeam/mongo-go-pagination\""))
 
 		for _, strct := range parsed {
-
 			metadata := structMetadata{}
 			if len(strct.Docs) == 1 {
 				if err := json.Unmarshal([]byte(strct.Docs[0]), &metadata); err != nil {
@@ -108,6 +108,8 @@ func generate(c *cli.Context) error {
 					Id(inputName+".CreatedAt").Op("=").Qual("time", "Now").Call(),
 				)
 
+				g.Id(inputName + ".Deleted").Op("=").False()
+
 				g.If(
 					List(Id("res"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("InsertOne").Call(List(Id("ctx"), Id(inputName))),
 					Err().Op("!=").Nil(),
@@ -122,33 +124,102 @@ func generate(c *cli.Context) error {
 
 			})
 
-			// getPrimitive
 			if idField != nil {
+				// replace
+				fn = f.Func().Params(structReceiver).Id("Replace").Params(Id("ctx").Qual("context", "Context"), Id("obj").Op("*").Id(strct.Name)).Parens(Error())
+				fn.BlockFunc(func(g *Group) {
+					g.If(Id("obj").Op("!=").Nil().Id("||").Id("obj.ID.IsZero()")).Block(
+						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
+					)
+
+					g.Id("obj.Deleted").Op("=").False()
+					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"))
+					isErrorNoDocuments1(g)
+					g.Return(Nil())
+				})
+				// getPrimitive
 				fn = f.Func().Params(structReceiver).Id("GetPrimitive").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
 					g.Id("res").Op(":=").Id(strct.Name).Values()
-					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField))))).Dot("Decode").Call(Op("&").Id("res"))
+					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField))), Values((Lit("deleted")), Id("false")))).Dot("Decode").Call(Op("&").Id("res"))
 					isErrorNoDocuments(g)
 					g.Return(Op("&").Id("res"), Nil())
 				})
+				// get
 				fn = f.Func().Params(structReceiver).Id("Get").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).String()).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
 					g.List(Id("_id"), Err()).Op(":=").Qual("go.mongodb.org/mongo-driver/bson/primitive", "ObjectIDFromHex").Call(Id(getVarNameForField(*idField)))
 					isErrorReturnNilErr(g)
 					g.Return(Id(receiverId).Dot("GetPrimitive").Call(Id("ctx"), Id("_id")))
 				})
-				fn = f.Func().Params(structReceiver).Id("Delete").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "DeleteResult"), Error()))
+
+				//delete
+				fn = f.Func().Params(structReceiver).Id("Delete").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "UpdateResult"), Error()))
 				fn.BlockFunc(func(g *Group) {
-					g.List(Id("res"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("DeleteOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField)))))
-					isErrorNoDocuments(g)
-					g.Return(Id("res"), Nil())
+					g.Id("update").Op(":=").Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("$set"): Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("deleted"): Id("true")})})
+					g.List(Id("ur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("UpdateByID").Call(Id("ctx"), Id(getVarNameForField(*idField)), Id("update"))
+					isErrorReturnNilErr(g)
+					g.Return(Id("ur"), Id("nil"))
+				})
+
+				//update
+				fn = f.Func().Params(structReceiver).
+					Id("Update").
+					Params(
+						Id("ctx").Qual("context", "Context"),
+						Id(getVarNameForField(*idField)).Id(idField.Type),
+						Id("set"),
+						Id("unset").Op("[]").Qual("go.mongodb.org/mongo-driver/bson/primitive", "E"),
+					).
+					Parens(List(
+						Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "UpdateResult"),
+						Error(),
+					))
+				fn.BlockFunc(func(g *Group) {
+					g.If(
+						Id("len").Call(Id("set")).Op("==").Id("0").
+							Op("&&").
+							Id("len").Call(Id("unset")).Op("==").Id("0"),
+					).Block(
+						Return(Nil(), Nil()),
+					)
+
+					g.If(
+						Id("set").Op("==").Id("nil"),
+					).Block(
+						Id("set").Op("=").Id("make").Call(Id("[]").Qual("go.mongodb.org/mongo-driver/bson/primitive", "E"), Id("0"), Id("1")),
+					)
+					g.Id("set").Op("=").Id("append").Call(Id("set"), Qual("go.mongodb.org/mongo-driver/bson/primitive", "E").Values(Dict{Id("Key"): Lit("updatedAt"), Id("Value"): Id("time.Now()")}))
+
+					g.Id("d").Op(":=").Id("make").Call(Qual("go.mongodb.org/mongo-driver/bson", "D"), Id("0"), Id("0"))
+
+					g.If(
+						Id("len").Call(Id("set")).Op(">").Id("0"),
+					).Block(
+						Id("d").Op("=").Id("append").Call(Id("d"), Qual("go.mongodb.org/mongo-driver/bson/primitive", "E").Values(Dict{Id("Key"): Lit("$set"), Id("Value"): Id("bson.D(set)")})),
+					)
+
+					g.If(
+						Id("len").Call(Id("unset")).Op(">").Id("0"),
+					).Block(
+						Id("d").Op("=").Id("append").Call(Id("d"), Qual("go.mongodb.org/mongo-driver/bson/primitive", "E").Values(Dict{Id("Key"): Lit("$unset"), Id("Value"): Id("bson.D(unset)")})),
+					)
+
+					g.List(Id("ur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("UpdateOne").Call(Id("ctx"), PrimitiveM().Values(Dict{Lit("_id"): Id(getVarNameForField(*idField)), Lit("deleted"): Id("false")}), Id("d"))
+					isErrorReturnNilErr(g)
+					g.Return(Id("ur"), Id("nil"))
+					// g.List(Id("res"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("DeleteOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField)))))
+					// isErrorNoDocuments(g)
+					// g.Return(Id("res"), Nil())
 				})
 			}
 
 			// list
 			fn = f.Func().Params(structReceiver).Id("List").Params(Id("ctx").Qual("context", "Context")).Parens(List(Index().Id(strct.Name), Error()))
 			fn.BlockFunc(func(g *Group) {
-				g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values())
+				g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(Values(List(
+					Lit("deleted"), Id("false"),
+				))))
 				isErrorReturnNilErr(g)
 				g.Id("res").Op(":=").Index().Id(strct.Name).Values()
 				g.If(Err().Op(":=").Id("cur").Dot("All").Call(Id("ctx"), Op("&").Id("res")).Op(";").Id("err").Op("!=").Nil()).Block(
@@ -253,16 +324,18 @@ func generateInterfaces(c *cli.Context, f *jen.File) error {
 
 func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, tagToFieldMap map[string]structparser.Field, structReceiver *Statement) {
 	alreadyGenerated := make(map[string]struct{})
+	fmt.Printf("%s %s\n%s", meta.CollectionName, `meta.Indexes`, spew.Sdump(meta.Indexes)) // FIXME: wallace debug
 	for _, indexDef := range meta.Indexes {
 		fields := make([]structparser.Field, 0, len(indexDef.Keys))
 		for k := range indexDef.Keys {
 			f := tagToFieldMap[k]
 			fields = append(fields, f)
 		}
+		f.Comment("poop" + fmt.Sprint(indexDef.Options.Unique))
 		if indexDef.Options.Unique {
 			f.Func().Params(structReceiver).Id("GetBy" + getNamesForFunction(fields)).Call(getParams(fields)...).Parens(List(Op("*").Id(strct.Name), Error())).BlockFunc(func(g *Group) {
 				g.Id("res").Op(":=").Id(strct.Name).Values()
-				g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldsToBson(fields)...)).Dot("Decode").Call(Op("&").Id("res"))
+				g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(append(fieldsToBson(fields), Values((Lit("deleted")), Id("false")))...)).Dot("Decode").Call(Op("&").Id("res"))
 				isErrorNoDocuments(g)
 				g.Return(Op("&").Id("res"), Nil())
 			})
@@ -361,6 +434,16 @@ func isErrorNoDocuments(g *Group) *Statement {
 	)
 }
 
+func isErrorNoDocuments1(g *Group) *Statement {
+	return isError(
+		g,
+		If(Err().Op("==").Qual("go.mongodb.org/mongo-driver/mongo", "ErrNoDocuments")).Block(
+			Return(Nil()),
+		),
+		Return(Err()),
+	)
+}
+
 func isError(g *Group, codes ...Code) *jen.Statement {
 	return g.If(Err().Op("!=").Nil()).Block(codes...)
 }
@@ -414,4 +497,16 @@ type indexDefinition struct {
 	Options struct {
 		Unique bool `json:"unique"`
 	} `json:"options"`
+}
+
+func PrimitiveE() *Statement {
+	return Qual("go.mongodb.org/mongo-driver/bson/primitive", "E")
+}
+
+func PrimitiveD() *Statement {
+	return Qual("go.mongodb.org/mongo-driver/bson/primitive", "D")
+}
+
+func PrimitiveM() *Statement {
+	return Qual("go.mongodb.org/mongo-driver/bson/primitive", "M")
 }
