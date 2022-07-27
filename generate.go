@@ -128,7 +128,7 @@ func generate(c *cli.Context) error {
 				// replace
 				fn = f.Func().Params(structReceiver).Id("Replace").Params(Id("ctx").Qual("context", "Context"), Id("obj").Op("*").Id(strct.Name)).Parens(Error())
 				fn.BlockFunc(func(g *Group) {
-					g.If(Id("obj").Op("!=").Nil().Id("||").Id("obj.ID.IsZero()")).Block(
+					g.If(Id("obj").Op("==").Nil().Id("||").Id("obj.ID.IsZero()")).Block(
 						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
 					)
 
