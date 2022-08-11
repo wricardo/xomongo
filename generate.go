@@ -10,7 +10,6 @@ import (
 
 	"github.com/dave/jennifer/jen"
 	. "github.com/dave/jennifer/jen"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/fatih/structtag"
 	"github.com/urfave/cli/v2"
 	"github.com/wricardo/structparser"
@@ -324,7 +323,6 @@ func generateInterfaces(c *cli.Context, f *jen.File) error {
 
 func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, tagToFieldMap map[string]structparser.Field, structReceiver *Statement) {
 	alreadyGenerated := make(map[string]struct{})
-	fmt.Printf("%s %s\n%s", meta.CollectionName, `meta.Indexes`, spew.Sdump(meta.Indexes)) // FIXME: wallace debug
 	for _, indexDef := range meta.Indexes {
 		fields := make([]structparser.Field, 0, len(indexDef.Keys))
 		for k := range indexDef.Keys {
