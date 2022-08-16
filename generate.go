@@ -393,6 +393,9 @@ func getVarNameForField(field structparser.Field) string {
 	if field.Name == "Id" || field.Name == "ID" {
 		return "id"
 	}
+	if field.Name == "type" || field.Name == "Type" {
+		return "type_"
+	}
 	return makeFirstLowerCase(field.Name)
 }
 
