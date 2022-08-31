@@ -136,6 +136,18 @@ func generate(c *cli.Context) error {
 					isErrorNoDocuments1(g)
 					g.Return(Nil())
 				})
+				// upsert
+				fn = f.Func().Params(structReceiver).Id("Upsert").Params(Id("ctx").Qual("context", "Context"), Id("obj").Op("*").Id(strct.Name)).Parens(Error())
+				fn.BlockFunc(func(g *Group) {
+					g.If(Id("obj").Op("==").Nil().Id("||").Id("obj.ID.IsZero()")).Block(
+						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
+					)
+
+					g.Id("obj.Deleted").Op("=").False()
+					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"), Qual("go.mongodb.org/mongo-driver/mongo/options", "Replace").Call().Id(".SetUpsert").Call(Lit(true)))
+					isErrorNoDocuments1(g)
+					g.Return(Nil())
+				})
 				// getPrimitive
 				fn = f.Func().Params(structReceiver).Id("GetPrimitive").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
