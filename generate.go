@@ -51,14 +51,17 @@ func generate(c *cli.Context) error {
 			var idField *structparser.Field
 			tagToFieldMap := make(map[string]structparser.Field)
 
+			hasDeleted := false
 			// validate _id
 			for k, v := range strct.Fields {
+				var bsonTag *structtag.Tag
 				if v.Tag != "" {
 					val, err := structtag.Parse(v.Tag)
 					if err != nil {
 						return err
 					}
-					bsonTag, ok := val.Get("bson")
+					var ok error
+					bsonTag, ok = val.Get("bson")
 					if ok != nil {
 						return fmt.Errorf("field %s on struct %s has no bson tag", strct.Name, v.Name)
 					}
@@ -69,6 +72,9 @@ func generate(c *cli.Context) error {
 						idField = &strct.Fields[k]
 					}
 					tagToFieldMap[bsonTag.Name] = strct.Fields[k]
+				}
+				if v.Name == "Deleted" {
+					hasDeleted = true
 				}
 			}
 
@@ -107,7 +113,9 @@ func generate(c *cli.Context) error {
 					Id(inputName+".CreatedAt").Op("=").Qual("time", "Now").Call(),
 				)
 
-				g.Id(inputName + ".Deleted").Op("=").False()
+				if hasDeleted {
+					g.Id(inputName + ".Deleted").Op("=").False()
+				}
 
 				g.If(
 					List(Id("res"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("InsertOne").Call(List(Id("ctx"), Id(inputName))),
@@ -131,7 +139,9 @@ func generate(c *cli.Context) error {
 						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
 					)
 
-					g.Id("obj.Deleted").Op("=").False()
+					if hasDeleted {
+						g.Id("obj.Deleted").Op("=").False()
+					}
 					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"))
 					isErrorNoDocuments1(g)
 					g.Return(Nil())
@@ -143,7 +153,9 @@ func generate(c *cli.Context) error {
 						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
 					)
 
-					g.Id("obj.Deleted").Op("=").False()
+					if hasDeleted {
+						g.Id("obj.Deleted").Op("=").False()
+					}
 					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"), Qual("go.mongodb.org/mongo-driver/mongo/options", "Replace").Call().Id(".SetUpsert").Call(Lit(true)))
 					isErrorNoDocuments1(g)
 					g.Return(Nil())
@@ -152,7 +164,13 @@ func generate(c *cli.Context) error {
 				fn = f.Func().Params(structReceiver).Id("GetPrimitive").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Id(strct.Name), Error()))
 				fn.BlockFunc(func(g *Group) {
 					g.Id("res").Op(":=").Id(strct.Name).Values()
-					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(fieldToBson(*idField, Id(getVarNameForField(*idField))), Values((Lit("deleted")), Id("false")))).Dot("Decode").Call(Op("&").Id("res"))
+					values := []Code{
+						fieldToBson(*idField, Id(getVarNameForField(*idField))),
+					}
+					if hasDeleted {
+						values = append(values, Values((Lit("deleted")), Id("false")))
+					}
+					g.Err().Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("FindOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(values...)).Dot("Decode").Call(Op("&").Id("res"))
 					isErrorNoDocuments(g)
 					g.Return(Op("&").Id("res"), Nil())
 				})
@@ -165,12 +183,23 @@ func generate(c *cli.Context) error {
 				})
 
 				//delete
-				fn = f.Func().Params(structReceiver).Id("Delete").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "UpdateResult"), Error()))
+				returnName := "UpdateResult"
+				if !hasDeleted {
+					returnName = "DeleteResult"
+				}
+				fn = f.Func().Params(structReceiver).Id("Delete").Params(Id("ctx").Qual("context", "Context"), Id(getVarNameForField(*idField)).Id(idField.Type)).Parens(List(Op("*").Qual("go.mongodb.org/mongo-driver/mongo", returnName), Error()))
 				fn.BlockFunc(func(g *Group) {
-					g.Id("update").Op(":=").Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("$set"): Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("deleted"): Id("true")})})
-					g.List(Id("ur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("UpdateByID").Call(Id("ctx"), Id(getVarNameForField(*idField)), Id("update"))
-					isErrorReturnNilErr(g)
-					g.Return(Id("ur"), Id("nil"))
+					if hasDeleted {
+						g.Id("update").Op(":=").Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("$set"): Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("deleted"): Id("true")})})
+						g.List(Id("ur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("UpdateByID").Call(Id("ctx"), Id(getVarNameForField(*idField)), Id("update"))
+						isErrorReturnNilErr(g)
+						g.Return(Id("ur"), Id("nil"))
+					} else {
+						g.List(Id("ur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("DeleteOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit("_id"): Id("id")}))
+						isErrorReturnNilErr(g)
+						g.Return(Id("ur"), Id("nil"))
+					}
+
 				})
 
 				//update
@@ -228,9 +257,13 @@ func generate(c *cli.Context) error {
 			// list
 			fn = f.Func().Params(structReceiver).Id("List").Params(Id("ctx").Qual("context", "Context")).Parens(List(Index().Id(strct.Name), Error()))
 			fn.BlockFunc(func(g *Group) {
-				g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(Values(List(
+				items := []Code{List(
 					Lit("deleted"), Id("false"),
-				))))
+				)}
+				if !hasDeleted {
+					items = []Code{List()}
+				}
+				g.List(Id("cur"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("Find").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "D").Values(Values(items...)))
 				isErrorReturnNilErr(g)
 				g.Id("res").Op(":=").Index().Id(strct.Name).Values()
 				g.If(Err().Op(":=").Id("cur").Dot("All").Call(Id("ctx"), Op("&").Id("res")).Op(";").Id("err").Op("!=").Nil()).Block(

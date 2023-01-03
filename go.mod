@@ -7,7 +7,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/fatih/structtag v1.2.0
 	github.com/urfave/cli/v2 v2.4.0
-	github.com/wricardo/structparser v0.0.0-20220330202037-80d013825c6e
+	github.com/wricardo/structparser v0.0.0-20230103201945-525904902e35
 	go.mongodb.org/mongo-driver v1.8.4
 )
 
@@ -26,3 +26,5 @@ require (
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/text v0.3.7 // indirect
 )
+
+// replace github.com/wricardo/structparser => ../structparser
