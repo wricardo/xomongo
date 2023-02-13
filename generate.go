@@ -156,7 +156,7 @@ func generate(c *cli.Context) error {
 					if hasDeleted {
 						g.Id("obj.Deleted").Op("=").False()
 					}
-					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"), Qual("go.mongodb.org/mongo-driver/mongo/options", "Replace").Call().Id(".SetUpsert").Call(Lit(true)))
+					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID")}), Id("obj"), Qual("go.mongodb.org/mongo-driver/mongo/options", "Replace").Call().Id(".SetUpsert").Call(Lit(true)))
 					isErrorNoDocuments1(g)
 					g.Return(Nil())
 				})
