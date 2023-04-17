@@ -341,7 +341,7 @@ func generateInterfaces(c *cli.Context, f *jen.File) error {
 			{
 				interfaceName := makeFirstUpperCase(strct.Name)
 				generatedInterfaces = append(generatedInterfaces, interfaceName)
-				f.Comment("//go:generate go run github.com/ektra/mockery/v2 --name " + interfaceName)
+				f.Comment("//go:generate go run github.com/vektra/mockery/v2 --name " + interfaceName)
 				f.Type().Id(interfaceName).InterfaceFunc(func(g *Group) {
 					for _, v := range strct.Methods {
 						g.Id(v.Signature)
