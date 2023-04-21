@@ -141,9 +141,9 @@ func generate(c *cli.Context) error {
 						Return(Qual("errors", "New").Call(Lit("obj.ID is required"))),
 					)
 
-					if hasDeleted {
-						g.Id("obj.Deleted").Op("=").False()
-					}
+					// if hasDeleted {
+					// 	g.Id("obj.Deleted").Op("=").False()
+					// }
 					g.List(Id("_"), Err()).Op(":=").Id(receiverId).Dot("getCollection").Call().Dot("ReplaceOne").Call(Id("ctx"), Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{Lit(getBsonNameFromField(*idField)): Id("obj.ID"), Lit("deleted"): Id("false")}), Id("obj"))
 					isErrorNoDocuments1(g)
 					g.Return(Nil())
