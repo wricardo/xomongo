@@ -377,7 +377,6 @@ func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, ta
 			f := tagToFieldMap[k]
 			fields = append(fields, f)
 		}
-		f.Comment("poop" + fmt.Sprint(indexDef.Options.Unique))
 		if indexDef.Options.Unique {
 			f.Func().Params(structReceiver).Id("GetBy" + getNamesForFunction(fields)).Call(getParams(fields)...).Parens(List(Op("*").Id(strct.Name), Error())).BlockFunc(func(g *Group) {
 				g.Id("res").Op(":=").Id(strct.Name).Values()
