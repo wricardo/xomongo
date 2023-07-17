@@ -274,6 +274,20 @@ func generate(c *cli.Context) error {
 				g.Return(Id("res"), Nil())
 			})
 
+			f.Func().Params(structReceiver).Id("Page").Call(append([]Code{Id("ctx").Qual("context", "Context")}, Id("page").Id("int64"), Id("limit").Id("int64"))...).Parens(List(Index().Id(strct.Name), Id("*mongopagination.PaginationData"), Id("error"))).BlockFunc(func(g *Group) {
+				g.Id("page").Op("+=").Id("1")
+
+				g.Id("res").Op(":=").Index().Id(strct.Name).Values()
+
+				g.Id("filter").Op(":=").Qual("go.mongodb.org/mongo-driver/bson", "M").Values(Dict{})
+
+				g.List(Id("paginatedData"), Err()).Op(":=").Id("mongopagination").Dot("New").Call(Id("x.getCollection()")).Dot("Context").Call(Id("ctx")).Dot("Limit").Call(Id("limit")).Dot("Page").Call(Id("page")).Dot("Filter").Call(Id("filter")).Dot("Decode").Call(Id("&res")).Dot("Find").Call()
+				g.If(Err().Op("!=").Nil()).Block(
+					Return(Nil(), Nil(), Err()),
+				)
+				g.Return(Id("res"), Id("getPaginationData").Call(Id("paginatedData")), Nil())
+			})
+
 			// indexes
 			generateIndexes(f, strct, metadata, tagToFieldMap, structReceiver)
 
