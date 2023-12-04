@@ -40,7 +40,7 @@ func generate(c *cli.Context) error {
 			metadata := structMetadata{}
 			if len(strct.Docs) == 1 {
 				if err := json.Unmarshal([]byte(strct.Docs[0]), &metadata); err != nil {
-					return err
+					return fmt.Errorf("error parsing json struct documentation for struct %s: %w", strct.Name, err)
 				}
 			}
 			if metadata.CollectionName == "" {
