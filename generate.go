@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dave/jennifer/jen"
@@ -15,8 +16,10 @@ import (
 	"github.com/wricardo/structparser"
 )
 
-const inputName = "input"
-const receiverId = "x"
+const (
+	inputName  = "input"
+	receiverId = "x"
+)
 
 func generate(c *cli.Context) error {
 	parsed, err := structparser.ParseDirectoryWithFilter(c.String("input"), nil)
@@ -88,7 +91,7 @@ func generate(c *cli.Context) error {
 
 			structReceiver := Id(receiverId).Id("*" + repositoryName)
 
-			//constructor
+			// constructor
 			f.Func().Id("New" + strct.Name + "Repository").Params(Id("db").Op("*").Qual("go.mongodb.org/mongo-driver/mongo", "Database")).Id(strct.Name + "Repository").Block(
 				Return(Op("&").Id(repositoryName).Values(Dict{
 					Id("db"): Id("db"),
@@ -130,7 +133,6 @@ func generate(c *cli.Context) error {
 					Return(Nil()),
 				)
 				g.Return(Nil())
-
 			})
 
 			if idField != nil {
@@ -184,7 +186,7 @@ func generate(c *cli.Context) error {
 					g.Return(Id(receiverId).Dot("GetPrimitive").Call(Id("ctx"), Id("_id")))
 				})
 
-				//delete
+				// delete
 				returnName := "UpdateResult"
 				if !hasDeleted {
 					returnName = "DeleteResult"
@@ -201,10 +203,9 @@ func generate(c *cli.Context) error {
 						isErrorReturnNilErr(g)
 						g.Return(Id("ur"), Id("nil"))
 					}
-
 				})
 
-				//update
+				// update
 				fn = f.Func().Params(structReceiver).
 					Id("Update").
 					Params(
@@ -293,7 +294,7 @@ func generate(c *cli.Context) error {
 
 		}
 
-		file, err := os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+		file, err := os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 		if err != nil {
 			return err
 		}
@@ -309,7 +310,7 @@ func generate(c *cli.Context) error {
 
 		generateInterfaces(c, f)
 
-		file, err = os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+		file, err = os.OpenFile(c.String("output"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 		if err != nil {
 			return err
 		}
@@ -375,7 +376,6 @@ func generateInterfaces(c *cli.Context, f *jen.File) error {
 			dict := make(Dict, 0)
 			for _, v := range generatedInterfaces {
 				dict[Id(strings.TrimSuffix(v, "Repository"))] = Id("New" + v).Call(Id("db"))
-
 			}
 			g.Return(Op("&").Id("Repository").Values(dict))
 		})
@@ -434,6 +434,9 @@ func generateIndexes(f *File, strct structparser.Struct, meta structMetadata, ta
 }
 
 func getParams(fields []structparser.Field) []Code {
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Name < fields[j].Name
+	})
 	codes := []Code{}
 	codes = append(codes, Id("ctx").Qual("context", "Context"))
 	for _, v := range fields {
@@ -443,6 +446,9 @@ func getParams(fields []structparser.Field) []Code {
 }
 
 func getNamesForFunction(fields []structparser.Field) string {
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Name < fields[j].Name
+	})
 	tmp := make([]string, 0, len(fields))
 	for _, v := range fields {
 		tmp = append(tmp, v.Name)
